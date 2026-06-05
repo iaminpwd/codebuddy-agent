@@ -21,7 +21,7 @@ jobs:
             -H "Content-Type: application/json" \
             -H "x-api-key: ${{ secrets.CODEBUDDY_API_KEY }}" \
             -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
-            -d @"$EVENT_PATH")
+            --data-binary @"$EVENT_PATH")
             
           echo "API responded with status code: $HTTP_STATUS"
           if [ "$HTTP_STATUS" -ne 200 ]; then
