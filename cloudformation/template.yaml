@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CodeBuddy Infrastructure - Production Grade Serverless Stack'
+
+Parameters:
+  AgentId:
+    Type: String
+    Description: 'Amazon Bedrock Agent ID'
+  AliasId:
+    Type: String
+    Description: 'Amazon Bedrock Agent Alias ID'
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: 'GitHub Personal Access Token for PR I/O'
+  SlackWebhookUrl:
+    Type: String
+    NoEcho: true
+    Description: 'Slack Incoming Webhook URL for Notifications'
+
+Resources:
+  # 1. IAM Role (최소 권한 원칙 적용)
+  OrchestratorLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: codebuddy-orchestrator-role
+      AssumeRolePolicyDocument:
+        Version: '2010-09-09'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: codebuddy-lambda-execution-policy
+          PolicyDocument:
+            Version: '2010-09-09'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:log-group:/aws/lambda/codebuddy-*'
+              - Effect: Allow
+                Action:
+                  - 'bedrock:InvokeAgent'
+                Resource: '*'
+
+  # 2. API Gateway REST API 정의
+  CodeBuddyApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: CodeBuddyAPI
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  # 3. API Gateway /review 엔드포인트 리소스 생성
+  ReviewResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref CodeBuddyApi
+      ParentId: !GetAtt CodeBuddyApi.RootResourceId
+      PathPart: review
+
+  # 4. API Gateway POST Method 정의 (API Key 검증 필수 설정)
+  ReviewPostMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref CodeBuddyApi
+      ResourceId: !Ref ReviewResource
+      HttpMethod: POST
+      ApiKeyRequired: true
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OrchestratorLambda.Arn}/invocations'
+
+  # 5. API Gateway 배포 및 스테이지 설정
+  ApiDeployment:
+    Type: 'AWS::ApiGateway::Deployment'
+    DependsOn: ReviewPostMethod
+    Properties:
+      RestApiId: !Ref CodeBuddyApi
+
+  ApiStage:
+    Type: 'AWS::ApiGateway::Stage'
+    Properties:
+      RestApiId: !Ref CodeBuddyApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+
+  # 6. API Key 및 사용량 계획(Rate Limiting) 통합 관리
+  CodeBuddyApiKey:
+    Type: 'AWS::ApiGateway::ApiKey'
+    Properties:
+      Name: codebuddy-webhook-key
+      Enabled: true
+
+  CodeBuddyUsagePlan:
+    Type: 'AWS::ApiGateway::UsagePlan'
+    Properties:
+      UsagePlanName: codebuddy-rate-limit-plan
+      Throttle:
+        BurstLimit: 10
+        RateLimit: 5
+      ApiStages:
+        - ApiId: !Ref CodeBuddyApi
+          Stage: !Ref ApiStage
+
+  UsagePlanKeyLink:
+    Type: 'AWS::ApiGateway::UsagePlanKey'
+    Properties:
+      KeyId: !Ref CodeBuddyApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref CodeBuddyUsagePlan
+
+  # 7. Lambda Permission (API Gateway가 Lambda를 호출할 수 있도록 허용)
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref OrchestratorLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: 'apigateway.amazonaws.com'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CodeBuddyApi}/*/POST/review'
+
+  # [추가됨] Bedrock Agent가 Lambda를 Action Group 도구로써 실행하도록 허용
+  BedrockAgentInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref OrchestratorLambda
+      Action: 'lambda:InvokeFunction'
+      Principal: 'bedrock.amazonaws.com'
+      # 특정 Agent ID에서만 호출 가능하도록 보안 격리 (PoLP)
+      SourceArn: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/${AgentId}'
+
+  # 8. Orchestrator Lambda Function 정의
+  OrchestratorLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: codebuddy-orchestrator
+      Runtime: python3.12
+      Handler: orchestrator.handler
+      Role: !GetAtt OrchestratorLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Sub 'codebuddy-deployment-bucket-${AWS::AccountId}' # 실제 환경변수 혹은 사전에 정의된 S3 패키지 명시
+        S3Key: 'lambda_code.zip'
+      Environment:
+        Variables:
+          AGENT_ID: !Ref AgentId
+          ALIAS_ID: !Ref AliasId
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+
+Outputs:
+  WebhookEndpoint:
+    Description: 'GitHub Webhook Payload URL로 등록할 API Gateway 엔드포인트'
+    Value: !Sub 'https://${CodeBuddyApi}.execute-api.${AWS::Region}.amazonaws.com/prod/review'
+  ApiKeySecret:
+    Description: 'API Gateway 요청 시 x-api-key 헤더에 포함할 인증 키'
+    Value: !Ref CodeBuddyApiKey
