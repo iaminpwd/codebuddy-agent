@@ -48,6 +48,10 @@ Resources:
                 Action:
                   - 'bedrock:InvokeAgent'
                 Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}'
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:codebuddy-orchestrator'
 
   # 2. API Gateway REST API 정의
   CodeBuddyApi:
