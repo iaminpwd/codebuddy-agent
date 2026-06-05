@@ -16,15 +16,18 @@ Parameters:
     Type: String
     NoEcho: true
     Description: 'Slack Incoming Webhook URL for Notifications'
+  WebhookSecret:
+    Type: String
+    NoEcho: true
+    Description: 'GitHub Webhook Secret for signature verification'
 
 Resources:
   # 1. IAM Role (최소 권한 원칙 적용)
   OrchestratorLambdaRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: codebuddy-orchestrator-role
       AssumeRolePolicyDocument:
-        Version: '2010-09-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -33,7 +36,7 @@ Resources:
       Policies:
         - PolicyName: codebuddy-lambda-execution-policy
           PolicyDocument:
-            Version: '2010-09-09'
+            Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
@@ -44,7 +47,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'bedrock:InvokeAgent'
-                Resource: '*'
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}'
 
   # 2. API Gateway REST API 정의
   CodeBuddyApi:
@@ -134,6 +137,8 @@ Resources:
       # 특정 Agent ID에서만 호출 가능하도록 보안 격리 (PoLP)
       SourceArn: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/${AgentId}'
 
+
+
   # 8. Orchestrator Lambda Function 정의
   OrchestratorLambda:
     Type: 'AWS::Lambda::Function'
@@ -144,6 +149,7 @@ Resources:
       Role: !GetAtt OrchestratorLambdaRole.Arn
       Timeout: 300
       MemorySize: 1024
+
       Code:
         S3Bucket: !Sub 'codebuddy-deployment-bucket-${AWS::AccountId}' # 실제 환경변수 혹은 사전에 정의된 S3 패키지 명시
         S3Key: 'lambda_code.zip'
@@ -153,6 +159,7 @@ Resources:
           ALIAS_ID: !Ref AliasId
           GITHUB_TOKEN: !Ref GitHubToken
           SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          WEBHOOK_SECRET: !Ref WebhookSecret
 
 Outputs:
   WebhookEndpoint:

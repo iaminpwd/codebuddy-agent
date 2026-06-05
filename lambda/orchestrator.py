@@ -2,8 +2,10 @@
 import os
 import json
 import boto3
-import requests
+import urllib.request
 import logging
+import hmac
+import hashlib
 
 from tools.github_pr import get_github_pr, post_pr_comment
 from tools.complexity import analyze_complexity
@@ -15,16 +17,36 @@ logger.setLevel(logging.INFO)
 
 bedrock_runtime = boto3.client(service_name="bedrock-agent-runtime", region_name="ap-northeast-2")
 
+def verify_signature(event):
+    """Verifies the GitHub webhook signature."""
+    secret = os.environ.get("WEBHOOK_SECRET")
+    if not secret:
+        return False
+    
+    headers = event.get("headers", {})
+    # API Gateway converts headers to lowercase in some contexts, so check both
+    signature = headers.get("X-Hub-Signature-256") or headers.get("x-hub-signature-256")
+    if not signature:
+        return False
+        
+    body = event.get("body", "")
+    mac = hmac.new(secret.encode("utf-8"), body.encode("utf-8"), hashlib.sha256)
+    expected_signature = f"sha256={mac.hexdigest()}"
+    return hmac.compare_digest(expected_signature, signature)
+
 def send_slack_notification(pr_url: str, status: str, summary: str):
     # (기존과 동일하므로 생략 없이 유지)
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
     if not webhook_url:
-        return
-    payload = {"text": f" *CodeBuddy 리뷰 완료*\n*PR:* {pr_url}\n*상태:* {status}\n*요약:* {summary[:200]}..."}
+        return {"status": "error", "message": "SLACK_WEBHOOK_URL is missing"}
+    payload = {"text": f"🚀 *CodeBuddy 리뷰 완료*\n*PR:* {pr_url}\n*상태:* {status}\n*요약:* {summary[:200]}..."}
     try:
-        requests.post(webhook_url, json=payload, timeout=10)
+        req = urllib.request.Request(webhook_url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as res:
+            return {"status": "success", "message": "Slack 알림 전송 성공", "api_status": res.status}
     except Exception as e:
         logger.error(f"Slack notification failed: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 # ==========================================
 # [추가됨] Bedrock Agent Action Group 라우터
@@ -35,8 +57,13 @@ def handle_agent_action(event):
     parameters = {p["name"]: p["value"] for p in event.get("parameters", [])}
     request_body = {}
     if "requestBody" in event and "content" in event["requestBody"]:
-        # application/json 파싱
-        request_body = json.loads(event["requestBody"]["content"]["application/json"]["properties"])
+        # properties is a list of dicts: [{'name': '...', 'type': '...', 'value': '...'}]
+        properties = event["requestBody"]["content"]["application/json"].get("properties", [])
+        if isinstance(properties, list):
+            request_body = {p["name"]: p["value"] for p in properties}
+        else:
+             # Fallback if somehow it's already parsed as dict
+             request_body = properties
 
     response_body = {}
     
@@ -48,6 +75,12 @@ def handle_agent_action(event):
             response_body = post_pr_comment(request_body.get("owner"), request_body.get("repo"), int(request_body.get("pr_number")), request_body.get("comment"))
         elif api_path == "/analyze/complexity":
             response_body = analyze_complexity(request_body.get("code"))
+        elif api_path == "/generate/test":
+            response_body = generate_unit_test(request_body.get("code"))
+        elif api_path == "/analyze/refactor":
+            response_body = suggest_refactor(request_body.get("code"))
+        elif api_path == "/slack/send":
+            response_body = send_slack_notification(request_body.get("pr_url"), request_body.get("status"), request_body.get("summary"))
         else:
             response_body = {"status": "error", "message": f"Unknown API path: {api_path}"}
     except Exception as e:
@@ -75,6 +108,12 @@ def handler(event, context):
         return handle_agent_action(event)
         
     # 분기 2: API Gateway를 통한 GitHub Webhook 호출인 경우
+    
+    # Verify GitHub Webhook Signature
+    if not verify_signature(event):
+        logger.error("Invalid Webhook Signature")
+        return {"statusCode": 401, "body": json.dumps("Unauthorized")}
+
     try:
         body = json.loads(event.get("body", "{}"))
         pr_info = body.get("pull_request")

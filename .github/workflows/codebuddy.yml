@@ -1,0 +1,30 @@
+name: CodeBuddy PR Auto Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  codebuddy-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger CodeBuddy Review API
+        run: |
+          # GitHub Action에서 제공하는 원본 이벤트 Payload 파일 사용
+          EVENT_PATH="${{ github.event_path }}"
+          
+          # HMAC SHA256 Signature 생성
+          SIGNATURE=$(cat "$EVENT_PATH" | openssl dgst -sha256 -hmac "${{ secrets.CODEBUDDY_WEBHOOK_SECRET }}" | sed 's/^.* //')
+          
+          echo "Triggering CodeBuddy API Gateway Endpoint..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ secrets.CODEBUDDY_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${{ secrets.CODEBUDDY_API_KEY }}" \
+            -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+            -d @"$EVENT_PATH")
+            
+          echo "API responded with status code: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: CodeBuddy API invocation failed."
+            exit 1
+          fi

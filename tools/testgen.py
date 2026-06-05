@@ -1,4 +1,4 @@
-# FILE: ./lambda/tools/testgen.py
+# FILE: ./tools/testgen.py
 import ast
 import logging
 

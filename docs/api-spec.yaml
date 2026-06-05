@@ -75,3 +75,63 @@ paths:
       responses:
         '200':
           description: 복잡도 지표 반환 성공
+  /generate/test:
+    post:
+      summary: 테스트 코드 생성 가이드
+      description: 소스 코드를 분석하여 테스트 가능한 함수 서명을 추출하고, pytest 단위 테스트 생성 지침을 반환합니다.
+      operationId: generate_unit_test
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: 분석 대상 소스 코드 문자열
+      responses:
+        '200':
+          description: 단위 테스트 생성 가이드 반환 성공
+  /analyze/refactor:
+    post:
+      summary: 코드 리팩토링 가이드
+      description: 소스 코드에 대한 PEP8 및 클린 코드 기반 리팩토링 지침을 반환합니다.
+      operationId: suggest_refactor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: 리팩토링 대상 소스 코드 문자열
+      responses:
+        '200':
+          description: 리팩토링 가이드 반환 성공
+  /slack/send:
+    post:
+      summary: Slack 채널에 알림 전송
+      description: 리뷰 완료 상태 및 결과를 Slack 채널에 전송합니다.
+      operationId: send_slack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pr_url, status, summary]
+              properties:
+                pr_url:
+                  type: string
+                status:
+                  type: string
+                summary:
+                  type: string
+      responses:
+        '200':
+          description: 알림 전송 완료

@@ -1,5 +1,7 @@
 import os
-import requests
+import urllib.request
+import urllib.error
+import json
 import logging
 
 logger = logging.getLogger()
@@ -24,12 +26,14 @@ def get_github_pr(owner: str, repo: str, pr_number: int) -> dict:
     url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/pulls/{pr_number}"
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            if not response.text.strip():
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            text = response.read().decode('utf-8')
+            if not text.strip():
                 return {"status": "success", "data": "변경 사항이 없습니다."} # 빈 PR 방어 
-            return {"status": "success", "data": response.text}
-        return {"status": "error", "message": f"GitHub API error: {response.status_code}"}
+            return {"status": "success", "data": text}
+    except urllib.error.HTTPError as e:
+        return {"status": "error", "message": f"GitHub API error: {e.code}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -40,9 +44,10 @@ def post_pr_comment(owner: str, repo: str, pr_number: int, comment: str) -> dict
     payload = {"body": comment}
     
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        if response.status_code == 201:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
             return {"status": "success", "message": "Comment posted successfully."}
-        return {"status": "error", "message": response.text}
+    except urllib.error.HTTPError as e:
+        return {"status": "error", "message": e.read().decode('utf-8')}
     except Exception as e:
         return {"status": "error", "message": str(e)}
