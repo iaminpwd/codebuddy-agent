@@ -100,14 +100,20 @@ def handle_agent_action(event):
         }
     }
 
+lambda_client = boto3.client('lambda', region_name='ap-northeast-2')
+
 def handler(event, context):
     logger.info(f"Received event: {json.dumps(event)}")
     
-    # 분기 1: Bedrock Agent의 Action Group 호출인 경우
+    # 0. 백그라운드 워커 모드인지 확인 (Self Asynchronous Invocation)
+    if event.get("is_async_worker"):
+        return run_agent_workflow(event)
+        
+    # 1. Bedrock Agent의 Action Group 호출인 경우
     if "apiPath" in event and "actionGroup" in event:
         return handle_agent_action(event)
         
-    # 분기 2: API Gateway를 통한 GitHub Webhook 호출인 경우
+    # 2. API Gateway를 통한 GitHub Webhook 호출인 경우
     
     # Verify GitHub Webhook Signature
     if not verify_signature(event):
@@ -115,11 +121,31 @@ def handler(event, context):
         return {"statusCode": 401, "body": json.dumps("Unauthorized")}
 
     try:
+        # payload parsing validation before async passing
         body = json.loads(event.get("body", "{}"))
         pr_info = body.get("pull_request")
         if not pr_info:
-            return {"statusCode": 200, "body": json.dumps("Not a PR event, ignoring.")} # 핑 테스트 등 방어
+            return {"statusCode": 200, "body": json.dumps("Not a PR event, ignoring.")}
             
+        # API Gateway의 29초 Timeout 방지를 위해 스스로를 비동기 호출
+        new_event = event.copy()
+        new_event["is_async_worker"] = True
+        
+        lambda_client.invoke(
+            FunctionName=context.invoked_function_arn,
+            InvocationType='Event',
+            Payload=json.dumps(new_event)
+        )
+        return {"statusCode": 200, "body": json.dumps({"status": "Accepted", "message": "Processing in background"})}
+    except Exception as e:
+        logger.error(f"Failed to trigger async worker: {str(e)}")
+        return {"statusCode": 500, "body": json.dumps("Internal Server Error")}
+
+def run_agent_workflow(event):
+    """비동기로 실행되는 Bedrock Agent 실제 호출 로직"""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        pr_info = body.get("pull_request")
         pr_url = pr_info.get("html_url", "unknown-url")
         url_parts = pr_url.split("/")
         owner = url_parts[-4]
@@ -127,8 +153,8 @@ def handler(event, context):
         pr_number = int(url_parts[-1])
     except Exception as e:
         logger.error(f"Webhook parsing failed: {str(e)}")
-        return {"statusCode": 400, "body": json.dumps("Invalid Webhook Payload")}
-
+        return
+        
     agent_id = os.environ.get("AGENT_ID")
     agent_alias_id = os.environ.get("ALIAS_ID")
     session_id = f"webhook-{owner}-{repo}-{pr_number}"
@@ -149,9 +175,6 @@ def handler(event, context):
                 completion += chunk.get("bytes", b"").decode("utf-8")
                 
         send_slack_notification(pr_url, "성공", completion)
-        return {"statusCode": 200, "body": json.dumps({"status": "success"})}
-        
     except Exception as agent_err:
         logger.error(f"Agent failed: {str(agent_err)}")
         send_slack_notification(pr_url, "실패", str(agent_err))
-        return {"statusCode": 500, "body": json.dumps("Agent Error")}
