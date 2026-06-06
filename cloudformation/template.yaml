@@ -173,6 +173,7 @@ Resources:
     Type: 'AWS::Bedrock::Agent'
     Properties:
       AgentName: 'CodeBuddy-Reviewer-IaC'
+      AutoPrepare: true
       Description: 'GitHub PR Auto Review Agent provisioned via CloudFormation'
       AgentResourceRoleArn: !GetAtt BedrockAgentServiceRole.Arn
       FoundationModel: 'anthropic.claude-3-5-sonnet-20240620-v1:0'
