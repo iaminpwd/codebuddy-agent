@@ -175,7 +175,7 @@ Resources:
       AgentName: 'CodeBuddy-Reviewer-IaC'
       Description: 'GitHub PR Auto Review Agent provisioned via CloudFormation'
       AgentResourceRoleArn: !GetAtt BedrockAgentServiceRole.Arn
-      FoundationModel: 'anthropic.claude-3-sonnet-20240229-v1:0'
+      FoundationModel: 'anthropic.claude-3-5-sonnet-20240620-v1:0'
       Instruction: |
         너는 수석 데브옵스 아키텍트이자 10년 차 시니어 개발자 수준의 코드 리뷰어(CodeBuddy)다.
         GitHub Pull Request 이벤트가 발생하면, 반드시 제공된 Action Group 도구들을 순차적으로 호출하여 다음 임무를 수행해야 한다.
