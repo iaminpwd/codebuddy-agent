@@ -2,39 +2,43 @@ openapi: 3.0.0
 info:
   title: CodeBuddy Agent Action Group Tools
   version: 1.0.0
-  description: GitHub PR 자동 리뷰 및 분석을 위한 CodeBuddy Agent 전용 내부 도구 모음 API 스키마
+  description: CodeBuddy Agent Tools
 paths:
   /github/pr:
     get:
-      summary: GitHub PR 세부 정보 및 변경 Diff 조회
-      description: 지정된 Repository와 PR 번호의 변경 내용 및 소스 코드를 가져옵니다.
+      summary: Get GitHub PR
+      description: Get GitHub PR details
       operationId: get_github_pr
       parameters:
         - name: owner
           in: query
           required: true
+          description: GitHub Repository Owner
           schema:
             type: string
-          description: GitHub Repository 소유자 계정명
         - name: repo
           in: query
           required: true
+          description: GitHub Repository Name
           schema:
             type: string
-          description: GitHub Repository 저장소 이름
         - name: pr_number
           in: query
           required: true
+          description: PR Number
           schema:
             type: integer
-          description: Pull Request 번호
       responses:
         '200':
-          description: 성공적으로 Diff 및 코드 추출 완료
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
   /github/comment:
     post:
-      summary: GitHub PR 내 자동 리뷰 댓글 등록
-      description: Agent가 분석한 코드 리뷰 결과 및 개선 제안을 해당 PR에 코멘트로 남깁니다.
+      summary: PR 코멘트 등록
+      description: 리뷰 코멘트를 등록합니다.
       operationId: post_pr_comment
       requestBody:
         required: true
@@ -46,20 +50,27 @@ paths:
               properties:
                 owner:
                   type: string
+                  description: Repository owner
                 repo:
                   type: string
+                  description: Repository name
                 pr_number:
                   type: integer
+                  description: PR number
                 comment:
                   type: string
-                  description: 마크다운 포맷의 리뷰 의견 및 코드 제안
+                  description: Review comment
       responses:
-        '201':
-          description: 코멘트 등록 성공
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
   /analyze/complexity:
     post:
-      summary: Radon 기반 소스 코드 순환 복잡도 분석
-      description: 제출된 파이썬 코드의 Cyclomatic Complexity를 측정하여 위험도를 산출합니다.
+      summary: 복잡도 분석
+      description: 코드 복잡도를 산출합니다.
       operationId: analyze_complexity
       requestBody:
         required: true
@@ -71,14 +82,18 @@ paths:
               properties:
                 code:
                   type: string
-                  description: 분석 대상 소스 코드 문자열
+                  description: Source code
       responses:
         '200':
-          description: 복잡도 지표 반환 성공
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
   /generate/test:
     post:
-      summary: 테스트 코드 생성 가이드
-      description: 소스 코드를 분석하여 테스트 가능한 함수 서명을 추출하고, pytest 단위 테스트 생성 지침을 반환합니다.
+      summary: 단위 테스트 생성
+      description: 테스트 코드 가이드를 반환합니다.
       operationId: generate_unit_test
       requestBody:
         required: true
@@ -90,14 +105,18 @@ paths:
               properties:
                 code:
                   type: string
-                  description: 분석 대상 소스 코드 문자열
+                  description: Source code
       responses:
         '200':
-          description: 단위 테스트 생성 가이드 반환 성공
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
   /analyze/refactor:
     post:
-      summary: 코드 리팩토링 가이드
-      description: 소스 코드에 대한 PEP8 및 클린 코드 기반 리팩토링 지침을 반환합니다.
+      summary: 코드 리팩토링
+      description: 클린 코드 리팩토링 가이드를 반환합니다.
       operationId: suggest_refactor
       requestBody:
         required: true
@@ -109,14 +128,18 @@ paths:
               properties:
                 code:
                   type: string
-                  description: 리팩토링 대상 소스 코드 문자열
+                  description: Source code
       responses:
         '200':
-          description: 리팩토링 가이드 반환 성공
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
   /slack/send:
     post:
-      summary: Slack 채널에 알림 전송
-      description: 리뷰 완료 상태 및 결과를 Slack 채널에 전송합니다.
+      summary: Slack 전송
+      description: 결과를 슬랙에 전송합니다.
       operationId: send_slack
       requestBody:
         required: true
@@ -128,10 +151,17 @@ paths:
               properties:
                 pr_url:
                   type: string
+                  description: PR URL
                 status:
                   type: string
+                  description: Review Status
                 summary:
                   type: string
+                  description: Review Summary
       responses:
         '200':
-          description: 알림 전송 완료
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object

@@ -2,12 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'CodeBuddy Infrastructure - Production Grade Serverless Stack'
 
 Parameters:
-  AgentId:
+  S3BucketName:
     Type: String
-    Description: 'Amazon Bedrock Agent ID'
-  AliasId:
-    Type: String
-    Description: 'Amazon Bedrock Agent Alias ID'
+    Description: 'S3 Bucket Name for Lambda code and API Schema'
   GitHubToken:
     Type: String
     NoEcho: true
@@ -47,11 +44,41 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'bedrock:InvokeAgent'
-                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}'
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${CodeBuddyAgent}/*'
               - Effect: Allow
                 Action:
                   - 'lambda:InvokeFunction'
                 Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:codebuddy-orchestrator'
+
+  # 1-1. Bedrock Agent IAM Role
+  BedrockAgentServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+              ArnLike:
+                'aws:SourceArn': !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
+      Policies:
+        - PolicyName: bedrock-invoke-model
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'bedrock:InvokeModel'
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
 
   # 2. API Gateway REST API 정의
   CodeBuddyApi:
@@ -139,7 +166,43 @@ Resources:
       Action: 'lambda:InvokeFunction'
       Principal: 'bedrock.amazonaws.com'
       # 특정 Agent ID에서만 호출 가능하도록 보안 격리 (PoLP)
-      SourceArn: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/${AgentId}'
+      SourceArn: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/${CodeBuddyAgent}'
+
+  # [NEW] Bedrock Agent 자동 생성
+  CodeBuddyAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: 'CodeBuddy-Reviewer-IaC'
+      Description: 'GitHub PR Auto Review Agent provisioned via CloudFormation'
+      AgentResourceRoleArn: !GetAtt BedrockAgentServiceRole.Arn
+      FoundationModel: 'anthropic.claude-3-sonnet-20240229-v1:0'
+      Instruction: |
+        너는 수석 데브옵스 아키텍트이자 10년 차 시니어 개발자 수준의 코드 리뷰어(CodeBuddy)다.
+        GitHub Pull Request 이벤트가 발생하면, 반드시 제공된 Action Group 도구들을 순차적으로 호출하여 다음 임무를 수행해야 한다.
+        
+        1. get_github_pr: PR의 변경된 소스 코드와 Diff를 가져온다.
+        2. analyze_complexity: 코드가 복잡한지 순환 복잡도를 분석한다.
+        3. generate_unit_test & suggest_refactor: 테스트 코드와 클린 코드 관점의 리팩토링을 제안한다.
+        4. post_pr_comment: 위 분석 결과를 종합하여 마크다운 형태의 상세한 리뷰 코멘트를 GitHub PR에 등록한다.
+        5. send_slack: 모든 작업이 끝나면 최종 리뷰 요약을 Slack으로 전송한다.
+        
+        명확한 근거(공식 문서, PEP8 등)를 바탕으로 객관적이고 전문적인 어조로 리뷰를 작성하라.
+      ActionGroups:
+        - ActionGroupName: 'CodeBuddyActions'
+          ActionGroupState: 'ENABLED'
+          ActionGroupExecutor:
+            Lambda: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:codebuddy-orchestrator'
+          ApiSchema:
+            S3:
+              S3BucketName: !Ref S3BucketName
+              S3ObjectKey: 'api-spec.yaml'
+
+  CodeBuddyAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentId: !Ref CodeBuddyAgent
+      AgentAliasName: 'prod'
+      Description: 'Production Alias for CodeBuddy'
 
 
 
@@ -155,12 +218,12 @@ Resources:
       MemorySize: 1024
 
       Code:
-        S3Bucket: !Sub 'codebuddy-deployment-bucket-${AWS::AccountId}' # 실제 환경변수 혹은 사전에 정의된 S3 패키지 명시
+        S3Bucket: !Ref S3BucketName
         S3Key: 'lambda_code.zip'
       Environment:
         Variables:
-          AGENT_ID: !Ref AgentId
-          ALIAS_ID: !Ref AliasId
+          AGENT_ID: !Ref CodeBuddyAgent
+          ALIAS_ID: 'TSTALIASID'
           GITHUB_TOKEN: !Ref GitHubToken
           SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
           WEBHOOK_SECRET: !Ref WebhookSecret
